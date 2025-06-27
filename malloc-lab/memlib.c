@@ -12,12 +12,12 @@
 #include <errno.h>
 
 #include "memlib.h"
-#include "config.h"
+#include "config.h"           // 여기 MAXHEAP 정의되어 있음
 
-/* private variables */
-static char *mem_start_brk;  /* points to first byte of heap */
-static char *mem_brk;        /* points to last byte of heap */
-static char *mem_max_addr;   /* largest legal heap address */ 
+/* private global variables */
+static char *mem_start_brk;  /* points to first byte of heap (힙의 시작 주소) */
+static char *mem_brk;        /* points to last byte of heap (현재 힙 영역의 끝 주소 + 1)*/
+static char *mem_max_addr;   /* largest legal heap address (힙이 가질 수 있는 최대 주소)*/ 
 
 /* 
  * mem_init - initialize the memory system model
@@ -25,13 +25,14 @@ static char *mem_max_addr;   /* largest legal heap address */
 void mem_init(void)
 {
     /* allocate the storage we will use to model the available VM */
+    /* MAXHEAP 매크로상수? 만큼 공간을 할당하기 */
     if ((mem_start_brk = (char *)malloc(MAX_HEAP)) == NULL) {
 	fprintf(stderr, "mem_init_vm: malloc error\n");
 	exit(1);
     }
 
-    mem_max_addr = mem_start_brk + MAX_HEAP;  /* max legal heap address */
-    mem_brk = mem_start_brk;                  /* heap is empty initially */
+    mem_max_addr = mem_start_brk + MAX_HEAP;  /* max legal heap address (가능한 힙의 최대주소) */
+    mem_brk = mem_start_brk;                  /* heap is empty initially (힙은 처음엔 비어 있음) */
 }
 
 /* 
