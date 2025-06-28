@@ -65,22 +65,33 @@ team_t team = {
 // 블록 주소는 헤더 끝, 실제 할당 메모리 영역 사이임을 잊지 말아라
 
 // 블록 주소로, 헤더의 주소 계산 (헤더의 크기만큼 빼줌)
-#define HDRP(bp) ((char *)(bp) - WSIZE)             
+#define HDRP(bp) ((char *)(bp) - 3 * WSIZE)     
+
+// 블록 주소로, prev 주소 포인터 계산
+#define PRVP(bp) ((char *)(bp) - 2 * WSIZE)
+
+// 블록 주소로, next 포인터 주소 계산
+#define NXTP(bp) ((char *)(bp) - 1 * WSIZE)
 
 // 블록 주소로, 푸터의 주소 계산 (푸터 및 다음 헤더의 크기만큼 빼줌)
-#define FTRP(bp) ((char *)(bp) + GET_SIZE(HDRP(bp)) - DSIZE)          
+#define FTRP(bp) ((char *)(bp) + GET_SIZE(HDRP(bp)) - 3 * WSIZE)          
 
 // 다음 블록 주소 계산.
-#define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))             
+#define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - 3 * WSIZE)))             
 // 이전 블록 주소 계산.
-#define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))             
+#define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - 4 * WSIZE)))   
+// 연결 리스트상 이전 가용 블록의 주소 계산.
+#define PREV_NODE(bp) ((char *)(GET(PRVP(bp))))    
+// 연결 리스트상 다음 가용 블록의 주소 계산.
+#define NEXT_NODE(bp) ((char *)(GET(NXTP(bp))))
 
-static char *heap_listp;                    // 첫 블록을 가리킴
+static char *heap_listp;                    // 프롤로그 블록을 가리킴
+static char *headp;                         // 헤드를 가리킴
 static void *extend_heap(size_t);
 static void *coalesce(void *);
 static void *find_fit(size_t);
 static void place(void *bp, size_t asize);
-static void check_all();
+static void connect(void *nodeA, void *nodeB);
 
 /*
  * mm_init - initialize the malloc package.
@@ -90,18 +101,28 @@ int mm_init(void)
 {
     // mem_init()은 해줄 필요 없음. 이미 mdriver.c에 있음.
 
-    // (1) 메모리 시스템에서 4워드(16바이트)를 가져와서, 빈 가용 리스트를 만듦
-    heap_listp = (char *)mem_sbrk(4 * WSIZE);
+    // (1) 메모리 시스템에서 6워드(24바이트)를 가져와서, 빈 가용 리스트를 만듦
+    heap_listp = (char *)mem_sbrk(6 * WSIZE);
     if (heap_listp == (void *) -1) return -1;   // 메모리 할당에 실패했을 때
 
-    // (2) 16바이트를 채워야 함
-    PUT(heap_listp, 0);                             // (A) 맨 처음 비어 있는 4바이트
-    PUT(heap_listp + WSIZE, PACK(DSIZE, 1));        // (B) 프롤로그 블록의 헤더 (8 / 1)
-    PUT(heap_listp + WSIZE * 2, PACK(DSIZE, 1));    // (C) 프롤로그 블록의 푸터 (8 / 1)
-    PUT(heap_listp + WSIZE * 3, PACK(0, 1));        // (D) 에필로그 블록의 헤더
+    // (2) 24바이트를 채워야 함
+    PUT(heap_listp, 0);                                 // (A) 안 쓰는 블록
+    PUT(heap_listp + WSIZE, PACK(WSIZE * 4, 1));        // (B) 프롤로그 블록의 헤더 (16 / 1)
+    PUT(heap_listp + WSIZE * 2, 0);                     // (C) 프롤로그 블록의 prev 포인터
+    PUT(heap_listp + WSIZE * 3, 0);                     // (D) 프롤로그 블록의 next 포인터
+    PUT(heap_listp + WSIZE * 4, PACK(WSIZE * 4, 1));    // (D) 프롤로그 블록의 푸터 (16 / 1)
+    PUT(heap_listp + WSIZE * 5, PACK(0, 1));            // (E) 에필로그 블록의 헤더
 
-    // (3) 가용 블록을 생성??
-    heap_listp += WSIZE * 2;                        // 맨 처음엔 여길 가리킴
+    // (3) 프롤로그 블록을 가리키는 전역 포인터
+    heap_listp += WSIZE * 3;                            // next 포인터 이후, payload 이전 주소.
+
+    // (4) 힙 영역 만들기
+    extend_heap(CHUNKSIZE / WSIZE);
+
+    // (5) 일단 이 코드에선 프롤로그 블록의 next 포인터가, 헤드 역할을 함.
+    // 헤드를 나타내는 전역 포인터에 헤드 주소 저장
+    headp = NEXT_BLKP(heap_listp);
+
     return 0;
 }
 
@@ -117,9 +138,11 @@ static void *extend_heap(size_t words){
     // 이전 에필로그 블록 자리에, 새로운 헤더가 옴
     PUT(HDRP(bp), PACK(size, 0));                       // 헤더
 
-    // 새로운 푸터 및 에필로그 블록
+    // 새로운 prev/next 포인터, 푸터 및 에필로그 블록
+    PUT(PRVP(bp), 0);                                   // prev 포인터. 널 포인터란 소립니다.
+    PUT(NXTP(bp), 0);                                   // next 포인터. 널 포인터란 소립니다.
     PUT(FTRP(bp), PACK(size, 0));                       // 푸터
-    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));       // 에필로그블록
+    PUT(HDRP(NEXT_BLKP(bp)), PACK(0, 1));               // 에필로그블록
     
     // Coalesce 함수로 병합
     return coalesce(bp);
@@ -142,8 +165,8 @@ void *mm_malloc(size_t size)
     // size == 0인 경우 NULL을 반환
     if (size == 0) return NULL;
 
-    // 현재 size에 헤더 + 푸터를 포함하고, 인접한 DSIZE의 배수로 올림 (패딩)
-    asize = ALIGN(size + DSIZE);
+    // 현재 size에 헤더 + 푸터 + 포인터 2개 저장 공간를 포함하고, 인접한 DSIZE의 배수로 올림 (패딩)
+    asize = ALIGN(size + 4 * WSIZE);
         
     // 맞는 칸이 있는지 확인
     bp = find_fit(asize);
@@ -178,48 +201,77 @@ void mm_free(void *ptr)
     PUT(HDRP(ptr), PACK(size, 0));
     PUT(FTRP(ptr), PACK(size, 0));
 
-    // 인접 가용 블록을 통합
+    // 인접 가용 블록을 통합. 연결도 여기서 이루어짐.
     coalesce(ptr);
 }
 
-// ptr이 가리키는 블록과 인접 블록을 연결 후, 연결된 블록의 주소 반환
+// 연결 리스트에서 노드 A -> 노드 B를 연결.
+static void connect(void *nodeA, void *nodeB){
+    if (nodeA == NULL){
+        headp = nodeB;
+    } else {
+        PUT(NXTP(nodeA), nodeB);
+    }
+    
+    if (nodeB != NULL){
+        PUT(PRVP(nodeB), nodeA);
+    }
+    
+    
+}
+
+// ptr이 가리키는 블록과 인접 블록을 연결 후, 연결된 블록의 주소 반환. 얜 리스트랑 상관없이 인접하면 병합.
+// 대신 이걸로 통합되면 연결관계를 바꿔주긴 해야 함.
 static void *coalesce(void *ptr){
     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(ptr)));    // 이전블록 할당비트
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(ptr)));    // 다음블록 할당비트
     size_t size = GET_SIZE(HDRP(ptr));
 
     if (prev_alloc && next_alloc){
-        // 연결 불가능. 현재 블록의 주소 return
+        return ptr;
     } else if (prev_alloc) {
         // 다음 블록과 연결 가능.
+
+        // 두 블록을 연결 리스트에서 제거
+        connect(PREV_NODE(ptr), NEXT_NODE(ptr));
+        connect(PREV_NODE(NEXT_BLKP(ptr)), NEXT_NODE(NEXT_BLKP(ptr)));
+
         size += GET_SIZE(HDRP(NEXT_BLKP(ptr)));     // 다음 블록의 크기 더하기
-        PUT(HDRP(ptr), PACK(size, 0));             // 현재 블록의 헤더 수정
-        PUT(FTRP(ptr), PACK(size, 0));             // 다음 블록의 푸터 수정 (한 블록으로 통합되었음에 유의할 것.)
+        PUT(HDRP(ptr), PACK(size, 0));              // 현재 블록의 헤더 수정
+        PUT(FTRP(ptr), PACK(size, 0));              // 다음 블록의 푸터 수정 (한 블록으로 통합되었음에 유의할 것.)
+        
     } else if (next_alloc) {
         // 이전 블록과 연결 가능.
+
+        // 두 블록을 연결 리스트에서 제거
+        connect(PREV_NODE(PREV_BLKP(ptr)), NEXT_NODE(PREV_BLKP(ptr)));
+        connect(PREV_NODE(ptr), NEXT_NODE(ptr));
+
         size += GET_SIZE(HDRP(PREV_BLKP(ptr)));     // 이전 블록의 크기 더하기
-        PUT(FTRP(ptr), PACK(size, 0));             // 현재 블록의 푸터 수정
-        PUT(HDRP(PREV_BLKP(ptr)), PACK(size, 0));  // 이전 블록의 헤더 수정
+        PUT(FTRP(ptr), PACK(size, 0));              // 현재 블록의 푸터 수정
+        PUT(HDRP(PREV_BLKP(ptr)), PACK(size, 0));   // 이전 블록의 헤더 수정
+
+        // 연결된 블록을 연결리스트 맨 앞에 추가
         ptr = PREV_BLKP(ptr);                       // 통합된 블록으로 주소 갱신
     } else {
         // 이전, 다음 블록과 연결 가능.
         size += GET_SIZE(HDRP(PREV_BLKP(ptr)));     // 이전 블록의 크기 더하기
         size += GET_SIZE(FTRP(NEXT_BLKP(ptr)));     // 다음 블록의 크기 더하기
-        PUT(HDRP(PREV_BLKP(ptr)), PACK(size, 0));  // 이전 블록의 헤더 수정
-        PUT(FTRP(NEXT_BLKP(ptr)), PACK(size, 0));  // 다음 블록의 푸터 수정
+        PUT(HDRP(PREV_BLKP(ptr)), PACK(size, 0));   // 이전 블록의 헤더 수정
+        PUT(FTRP(NEXT_BLKP(ptr)), PACK(size, 0));   // 다음 블록의 푸터 수정
         ptr = PREV_BLKP(ptr);                       // 통합된 블록으로 주소 갱신
     }
+    connect(NULL, ptr);
     return ptr;
 }
 
 // 묵시적 가용 리스트에서 first fit 검색을 수행.
 static void *find_fit(size_t asize){
-    void *bp;      // 현재 검색중인 블록
-    size_t block_size;          // 현재 블록의 크기
-    // 에필로그 블록 도달 시 종료
-    for (bp = heap_listp; (block_size = GET_SIZE(HDRP(bp))) != 0; bp = NEXT_BLKP(bp)){
+    void *bp = headp;      // 현재 검색중인 블록
+    // 가용 리스트의 끝 도착 시 종료
+    for (; bp == NULL; bp = NEXT_NODE(bp)){
         // 사이즈에 맞는 가용 블록이 있는 경우, 해당 블록 주소를 반환
-        if (asize <= block_size && GET_ALLOC(HDRP(bp)) == 0){
+        if (asize <= GET_SIZE(HDRP(bp))){
             return bp;
         }
     }
@@ -238,6 +290,7 @@ static void place(void *bp, size_t asize){
     if (rest_size >= 4 * WSIZE){
         // 최소 블록 크기 이상인 경우 분할을 수행한다
 
+
         // 앞 블록의 헤더
         PUT(HDRP(bp), PACK(asize, 1));
         // 앞 블록의 푸터
@@ -246,27 +299,35 @@ static void place(void *bp, size_t asize){
         PUT(HDRP(NEXT_BLKP(bp)), PACK(rest_size, 0));
         // 뒷 블록의 푸터 만들기
         PUT(FTRP(NEXT_BLKP(bp)), PACK(rest_size, 0));
+        // 뒷 블록의 next
+        PUT(NXTP(NEXT_BLKP(bp)), GET(NXTP(NEXT_BLKP(bp))));
+        // 가용 리스트 연결관계 조정
+
+        
     } else {
         // 최소 블록 크기 이상이 아닌 경우, 분할을 수행하지 않는다
-        // 헤더, 푸터만 0에서 1로 바꾸기
+        // 헤더, 푸터 0에서 1로 바꾸기
         PUT(HDRP(bp), PACK(curr_size, 1));
         PUT(FTRP(bp), PACK(curr_size, 1));
+
+        // 가용 리스트 연결관계 조정
+
     }
 }
 
-static void check_all(){
-    char *bp = heap_listp;
-    size_t block_size;
+// static void check_all(){
+//     char *bp = heap_listp;
+//     size_t block_size;
     
-    // 에필로그 블록 도달 시 종료
-    while (1){
-        block_size = GET_SIZE(HDRP(bp));
-        printf("(%d/%d) ", block_size, GET_ALLOC(HDRP(bp)));
-        if (block_size == 0) break;
-        bp = NEXT_BLKP(bp);
-    }
-    printf("\n"); 
-}
+//     // 에필로그 블록 도달 시 종료
+//     while (1){
+//         block_size = GET_SIZE(HDRP(bp));
+//         printf("(%d/%d) ", block_size, GET_ALLOC(HDRP(bp)));
+//         if (block_size == 0) break;
+//         bp = NEXT_BLKP(bp);
+//     }
+//     printf("\n"); 
+// }
 
 /*
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
