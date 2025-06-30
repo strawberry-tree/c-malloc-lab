@@ -7,9 +7,7 @@
             "request": "launch",
             "program": "${workspaceFolder}/malloc-lab/mdriver",
             "args": [
-                "-V",
-                "-f",
-                "traces/amptjp-bal.rep"
+                "-V"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}/malloc-lab",

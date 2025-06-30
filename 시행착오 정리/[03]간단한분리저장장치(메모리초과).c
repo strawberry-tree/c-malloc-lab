@@ -61,22 +61,18 @@ team_t team = {
 // 블록 주소는 헤더 끝, 실제 할당 메모리 영역 사이임을 잊지 말아라
 
 // 블록 주소로, 다음 노드를 가리키는 포인터의 주소 반환
-#define HDRP(bp) ((char *)(bp) - WSIZE);
+#define HDRP(bp) ((char *)(bp) - WSIZE)
 #define NXTP(bp) ((char *)(bp))             
          
+char *heaps[14];           
+static void *extend_heap(size_t, int);
+static int asize(size_t);
 
-char *heaps[14] = {NULL};           
-static void *extend_heap(size_t);
-static void *coalesce(void *);
-static void *find_fit(size_t);
-static void place(void *bp, size_t asize);
-// static void check_all();
-static size_t round(asize);
-
-size_t round(asize){
-    size_t sizes = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
-    for (int i = 0; i < 12; i++){
-        if asize <= (1 << sizes[i]) break;
+static int asize(size_t size){
+    size_t sizes[13] = {3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
+    int i;
+    for (i = 0; i < 13; i++){
+        if (size <= (1 << sizes[i])) break;
     }
     return i;
 }
@@ -87,18 +83,11 @@ size_t round(asize){
  */
 int mm_init(void)
 {
-    // mem_init()은 해줄 필요 없음. 이미 mdriver.c에 있음.
-    // 12개의 빈 가용 리스트를 만듦
+    // 주소정렬을 위한 4바이트
+    mem_sbrk(WSIZE); 
 
-    // (1) 메모리 시스템에서 12워드(48바이트)를 가져옴
-    heap_listp = (char *)mem_sbrk(12 * WSIZE);
-    if (heap_listp == (void *) -1) return -1;   // 메모리 할당에 실패했을 때
-
-    // (2) 각 워드는, 각 분리 가용 리스트의 첫 바이트 (값 없이 포인터만 저장함)
-    // 각 분리 가용 리스트의 시작 주소는 heaps[i]에 저장됨
-    for (int i = 0; i < 12; i++){
-        heaps[i] = heap_listp + DSIZE * i;  
-        PUT(heaps[i], 0);       // 나중에 각 분리 가용 리스트의 head 주소가 저장됨 
+    for (int i = 0; i < 14; i++){
+        heaps[i] = NULL;
     }
 
     return 0;         
@@ -107,8 +96,8 @@ int mm_init(void)
 // 힙이 초기화될 때 OR mm_malloc이 fit을 찾지 못했을 때, 힙을 요청크기 만큼 확장
 // 확장 후, 메모리를 동일 크기의 블록 'size'로 나누며, 함께 연결해 가용 리스트를 만듦 (이때 크기는 blockSize)
 static void *extend_heap(size_t words, int bIndex){
-    size_t bsize = 1 << (bIndex + 3);
-    size_t size = ALIGN(words * WSIZE);
+    size_t bSize = 1 << (bIndex + 3);
+    size_t size = words * WSIZE;
     char *bp;
 
     // 메모리 시스템에서 추가공간 요청
@@ -116,7 +105,7 @@ static void *extend_heap(size_t words, int bIndex){
     if (bp == (void *) -1) return NULL;          // 메모리 할당에 실패했을 때
 
     // 할당받은 공간을 나누어 분리 리스트에 넣기.
-    for (int k = 0; k < size / bIndex; k++){
+    for (int k = 0; k < size / bSize; k++){
         PUT(bp + bSize * k, bIndex);   // 헤더에 해당. 인덱스를 저장. 유효비트는 저장 안해도됨.
         PUT(bp + bSize * k + WSIZE, heaps[bIndex]);      // 포인터에 해당. 현재 헤드를 저장.
         heaps[bIndex] = bp + bSize * k + WSIZE;          // 헤드를 갱신.
@@ -134,24 +123,30 @@ static void *extend_heap(size_t words, int bIndex){
  */
 void *mm_malloc(size_t size)
 {
-    int asize;          // 몇번째 분리 리스트
+    int bIndex;          // 몇번째 분리 리스트
     size_t extendsize;  // fit이 없는 경우 이만큼 힙을 연장
-    char *bp;
+    void *bp;
 
     // size == 0인 경우 NULL을 반환
     if (size == 0) return NULL;
 
     // 현재 size를 특정 구간 (8, 16, 32, 64....)으로 올림
-    bIndex = round(size);
+    bIndex = asize(size + 4);
+    //printf("%d번째로 이동\n", bIndex);
+
         
     // 가용 리스트가 비었는지 확인
     if (heaps[bIndex] == NULL){
         // 비어 있으면 연장해야함
-        extendsize = MAX(asize, CHUNKSIZE);
+        // extendsize = MAX(1 << (bIndex + 3), CHUNKSIZE);
+        extendsize = 1 << (bIndex + 3);
         extend_heap(extendsize / WSIZE, bIndex);
     }
 
-    place(heaps[bIndex], bIndex);   // 주소 bp의 블록 할당
+    bp = heaps[bIndex];
+    heaps[bIndex] = (char *)GET(bp);
+
+    //printf("%d 크기 할당 완료\n", size);
     return bp;           // 할당된 블록 주소 반환 
 }
 
@@ -167,19 +162,13 @@ void mm_free(void *ptr)
     // 해당 블록은 가용 리스트 맨 앞으로 이동
 
     // 여기서 해당 크기만 보여있는 bIndex를 찾아야 함
-    // TODO 1. 여기서 크기를 어케 확인하지...?
     int bIndex = GET(HDRP(ptr));
     PUT(ptr, heaps[bIndex]);
-    PUT(heaps[bIndex], ptr);
-
+    heaps[bIndex] = ptr;
+    //printf("free 완료\n");
 }
 
 
-// 요청한 블록을 가용 블록의 시작에 배치.
-static void place(void *bp, int bIndex){
-    PUT(heaps[bIndex], GET(bp));
-    return bp;
-}
 
 // static void check_all(){
 //     char *bp = heap_listp;
