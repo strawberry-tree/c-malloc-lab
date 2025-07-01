@@ -100,7 +100,6 @@ static void pushNode(void *newNode);
 static void removeNode(void *erase);
 static int get_index(size_t);
 static void *r_split_block(char *, size_t, size_t);
-static void check_all(void);
 
 void *heap_heads[INDEX_COUNT];
 
@@ -122,7 +121,7 @@ static int get_index(size_t size) {
     else if (size <= 128) return 5;
     else if (size <= 192) return 6;
     else if (size <= 256) return 7;
-    else if (size <= 378) return 8;
+    else if (size <= 384) return 8;
     else if (size <= 512) return 9;
     else if (size <= 768) return 10;
     else if (size <= 1024) return 11;
@@ -336,7 +335,7 @@ static void *find_fit(size_t asize){
     void *bp;      // 현재 검색중인 블록
     int min_index = get_index(asize);   // 처음으로 시작할 인덱스
 
-    if (asize <= 512){
+    if (asize <= 1024){
         for (int index = min_index; index < INDEX_COUNT; index++){
             for (bp = heap_heads[index]; bp != NULL; bp = NEXT_NODE(bp)){
                 if (asize <= GET_SIZE(HDRP(bp))) return bp;
@@ -350,7 +349,7 @@ static void *find_fit(size_t asize){
         for (int index = min_index; index < INDEX_COUNT; index++){
             for (bp = heap_heads[index]; bp != NULL; bp = NEXT_NODE(bp)){
                 block_size = GET_SIZE(HDRP(bp));
-                if ((asize <= block_size) && (block_size - asize < min_diff) ){
+                if ((block_size >= asize) && (block_size - asize < min_diff) ){
                     result = bp;
                     min_diff = block_size - asize;
                 }
@@ -434,22 +433,48 @@ void *mm_realloc(void *bp, size_t size)
     if (oldSize >= (4 * WSIZE) + newSize){
         return r_split_block(bp, oldSize, newSize);
     } else if (oldSize >= newSize){
+
         return bp;
     } else {
         // 새 블록의 크기가 큰 경우
         // 오른쪽 블록이 미할당 + 확장할 만큼 클 때
         char *next = NEXT_BLKP(bp);
-        size_t allocSize = oldSize + GET_SIZE(HDRP(next));
-        get_preloc = GET_PRELOC(HDRP(bp));
-        if (!GET_ALLOC(HDRP(next)) && (allocSize >= newSize)){
-            removeNode(next);
-            PUT(HDRP(bp), PACK(allocSize, get_preloc, 1));              // 현재 블록의 헤더 수정
+        size_t nextSize = oldSize + GET_SIZE(HDRP(next));
+        char *prev = PREV_BLKP(bp);
+        size_t prevSize = GET_SIZE(HDRP(prev)) + oldSize;
+        size_t allSize = GET_SIZE(HDRP(next)) + GET_SIZE(HDRP(prev)) + oldSize;
 
-            if (allocSize >= newSize + 4 * WSIZE){
-                return r_split_block(bp, allocSize, newSize);
+        get_preloc = GET_PRELOC(HDRP(bp));
+        if (!GET_ALLOC(HDRP(next)) && (nextSize >= newSize)){
+            removeNode(next);
+            PUT(HDRP(bp), PACK(nextSize, get_preloc, 1));              // 현재 블록의 헤더 수정
+
+            if (nextSize >= newSize + 4 * WSIZE){
+                return r_split_block(bp, nextSize, newSize);
             }
             //printf("\n");
             return bp;
+        } else if (!GET_ALLOC(HDRP(prev)) && (prevSize >= newSize)){
+                get_preloc = GET_PRELOC(HDRP(prev));
+                removeNode(prev);
+                PUT(HDRP(prev), PACK(prevSize, get_preloc, 1));   // 이전 블록의 헤더 수정
+                memmove(prev, bp, oldSize - WSIZE);
+
+                if (prevSize >= newSize + 4 * WSIZE){
+                    return r_split_block(prev, prevSize, newSize);
+                }
+                return prev;
+        } else if (!GET_ALLOC(HDRP(next)) && !GET_ALLOC(HDRP(prev)) && (allSize >= newSize)) {
+            get_preloc = GET_PRELOC(HDRP(prev));
+                removeNode(prev);
+                removeNode(next);
+                PUT(HDRP(prev), PACK(allSize, get_preloc, 1));   // 이전 블록의 헤더 수정
+                memmove(prev, bp, oldSize - WSIZE);
+
+                if (allSize >= newSize + 4 * WSIZE){
+                    return r_split_block(prev, allSize, newSize);
+                }
+                return prev;
         } else {
             void *newBp = mm_malloc(size);
             //이전 블록의 내용을 새 블록으로 복사
@@ -458,5 +483,7 @@ void *mm_realloc(void *bp, size_t size)
             mm_free(bp);
             return newBp;
         }
+    
     }        
+    // }
 }

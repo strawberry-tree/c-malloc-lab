@@ -100,7 +100,6 @@ static void pushNode(void *newNode);
 static void removeNode(void *erase);
 static int get_index(size_t);
 static void *r_split_block(char *, size_t, size_t);
-static void check_all(void);
 
 void *heap_heads[INDEX_COUNT];
 
@@ -122,7 +121,7 @@ static int get_index(size_t size) {
     else if (size <= 128) return 5;
     else if (size <= 192) return 6;
     else if (size <= 256) return 7;
-    else if (size <= 378) return 8;
+    else if (size <= 384) return 8;
     else if (size <= 512) return 9;
     else if (size <= 768) return 10;
     else if (size <= 1024) return 11;
@@ -336,7 +335,7 @@ static void *find_fit(size_t asize){
     void *bp;      // 현재 검색중인 블록
     int min_index = get_index(asize);   // 처음으로 시작할 인덱스
 
-    if (asize <= 512){
+    if (asize <= 1024){
         for (int index = min_index; index < INDEX_COUNT; index++){
             for (bp = heap_heads[index]; bp != NULL; bp = NEXT_NODE(bp)){
                 if (asize <= GET_SIZE(HDRP(bp))) return bp;
@@ -350,7 +349,7 @@ static void *find_fit(size_t asize){
         for (int index = min_index; index < INDEX_COUNT; index++){
             for (bp = heap_heads[index]; bp != NULL; bp = NEXT_NODE(bp)){
                 block_size = GET_SIZE(HDRP(bp));
-                if ((asize <= block_size) && (block_size - asize < min_diff) ){
+                if ((block_size >= asize) && (block_size - asize < min_diff) ){
                     result = bp;
                     min_diff = block_size - asize;
                 }

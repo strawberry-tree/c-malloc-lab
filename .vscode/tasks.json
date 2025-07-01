@@ -17,10 +17,7 @@
             "problemMatcher": [
                 "$gcc"
             ],
-            "group": {
-                "kind": "build",
-                "isDefault": true
-            },
+            "group": "build",
             "detail": "컴파일러: /usr/bin/gcc"
         },
         {
@@ -39,13 +36,17 @@
             "type": "shell",
             "command": "make",
             "args": [],
-            "group": "build",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
             "dependsOn": [
                 "Clean"
             ],
             "problemMatcher": [
                 "$gcc"
             ],
+            
             "options": {
                 "cwd": "${workspaceFolder}/malloc-lab"
             }
