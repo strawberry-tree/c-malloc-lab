@@ -94,7 +94,7 @@ team_t team = {
 // 연결 리스트상 이후 가용 블록의 주소 설정
 #define SET_NXTP(bp, next_bp) PUT(NXTP(bp), (uintptr_t)(next_bp))
 
-#define INDEX_COUNT 16
+#define INDEX_COUNT 18
 
 
 static char *heap_listp;                    // 프롤로그 블록을 가리킴
@@ -107,18 +107,39 @@ static void pushNode(void *newNode);
 static void removeNode(void *erase);
 static void check_all();
 static int get_index(size_t);
+static void split_block(void *, size_t);
 
 void *heap_heads[INDEX_COUNT];
 
-// 크기를 입력받고, 어느 인덱스로 갈지 확인
-static int get_index(size_t size){
-    int index;
-    for (index = 4; index < INDEX_COUNT - 1; index++){
-        if (size <= (1 << index)) break;
-    }
-    return index;
-}
+// // 크기를 입력받고, 어느 인덱스로 갈지 확인
+// static int get_index(size_t size){
+//     int index;
+//     for (index = 4; index < INDEX_COUNT - 1; index++){
+//         if (size <= (1 << index)) break;
+//     }
+//     return index;
+// }
 
+int get_index(size_t size) {
+    if (size <= 16) return 0;
+    else if (size <= 32) return 1;
+    else if (size <= 48) return 2;
+    else if (size <= 64) return 3;
+    else if (size <= 96) return 4;
+    else if (size <= 128) return 5;
+    else if (size <= 192) return 6;
+    else if (size <= 256) return 7;
+    else if (size <= 384) return 8;
+    else if (size <= 512) return 9;
+    else if (size <= 768) return 10;
+    else if (size <= 1024) return 11;
+    else if (size <= 2048) return 12;
+    else if (size <= 4096) return 13;
+    else if (size <= 8192) return 14;
+    else if (size <= 16384) return 15;
+    else if (size <= 32768) return 16;
+    else return 17;
+}
 /*
  * mm_init - initialize the malloc package.
  * 필요한 초기화 수행 (e.g., 초기 힙 영역을 할당한다)
@@ -137,19 +158,17 @@ int mm_init(void)
 
     // (2) 16바이트를 채워야 함
     PUT(heap_listp, 0);                                 // (A) 안 쓰는 블록
-    PUT(heap_listp + WSIZE, PACK(WSIZE * 4, 1));        // (B) 프롤로그 블록의 헤더 (16 / 1)
-    PUT(heap_listp + WSIZE * 2, PACK(WSIZE * 4, 1));    // (D) 프롤로그 블록의 푸터 (16 / 1)
+    PUT(heap_listp + WSIZE, PACK(WSIZE * 2, 1));        // (B) 프롤로그 블록의 헤더 (16 / 1)
+    PUT(heap_listp + WSIZE * 2, PACK(WSIZE * 2, 1));    // (D) 프롤로그 블록의 푸터 (16 / 1)
     PUT(heap_listp + WSIZE * 3, PACK(0, 1));            // (E) 에필로그 블록의 헤더
 
     heap_listp += WSIZE * 2;  
-    if (extend_heap(4)==NULL)
-        return -1;
-    // (3) 힙 영역 만들기
-    if (extend_heap(CHUNKSIZE / WSIZE) == NULL){
-        return -1;
-    };
 
-    
+    // // (3) 힙 영역 만들기
+    // if (extend_heap(CHUNKSIZE / WSIZE) == NULL){
+    //     return -1;
+    // };
+
 
     return 0;
 }
@@ -204,8 +223,9 @@ void *mm_malloc(size_t size)
     }
 
     // 맞는 칸이 없으면 힙을 연장
-    extendsize = MAX(asize, CHUNKSIZE);
-    bp = extend_heap(extendsize / WSIZE);
+    // extendsize = MAX(asize, CHUNKSIZE);
+    // bp = extend_heap(extendsize / WSIZE);
+    bp = extend_heap(asize / WSIZE);
 
     if (bp == NULL){
         return NULL;
@@ -274,29 +294,7 @@ static void *coalesce(void *ptr){
     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(ptr)));    // 다음블록 할당비트
     size_t size = GET_SIZE(HDRP(ptr));
 
-    if (prev_alloc && next_alloc){
-    } else if (prev_alloc) {
-        // 다음 블록과 연결 가능.
-
-        // 다음 블록을 연결 리스트에서 제거
-        removeNode(NEXT_BLKP(ptr));
-
-        size += GET_SIZE(HDRP(NEXT_BLKP(ptr)));     // 다음 블록의 크기 더하기
-        PUT(HDRP(ptr), PACK(size, 0));              // 현재 블록의 헤더 수정
-        PUT(FTRP(ptr), PACK(size, 0));              // 다음 블록의 푸터 수정 (한 블록으로 통합되었음에 유의할 것.)
-        
-    } else if (next_alloc) {
-        // 이전 블록과 연결 가능.
-
-        // 이전 블록을 연결 리스트에서 제거
-        removeNode(PREV_BLKP(ptr));
-
-        size += GET_SIZE(HDRP(PREV_BLKP(ptr)));     // 이전 블록의 크기 더하기
-        PUT(FTRP(ptr), PACK(size, 0));              // 현재 블록의 푸터 수정
-        PUT(HDRP(PREV_BLKP(ptr)), PACK(size, 0));   // 이전 블록의 헤더 수정
-
-        ptr = PREV_BLKP(ptr);                       // 통합된 블록으로 주소 갱신
-    } else {
+    if (!prev_alloc && !next_alloc){
         // 이전, 다음 블록과 연결 가능.
 
         // 이전, 다음 블록을 연결 리스트에서 제거
@@ -307,6 +305,27 @@ static void *coalesce(void *ptr){
         size += GET_SIZE(HDRP(NEXT_BLKP(ptr)));     // 다음 블록의 크기 더하기
         PUT(HDRP(PREV_BLKP(ptr)), PACK(size, 0));   // 이전 블록의 헤더 수정
         PUT(FTRP(NEXT_BLKP(ptr)), PACK(size, 0));   // 다음 블록의 푸터 수정
+        ptr = PREV_BLKP(ptr);                       // 통합된 블록으로 주소 갱신
+    } else if (!next_alloc) {
+        // 다음 블록과 연결 가능.
+
+        // 다음 블록을 연결 리스트에서 제거
+        removeNode(NEXT_BLKP(ptr));
+
+        size += GET_SIZE(HDRP(NEXT_BLKP(ptr)));     // 다음 블록의 크기 더하기
+        PUT(HDRP(ptr), PACK(size, 0));              // 현재 블록의 헤더 수정
+        PUT(FTRP(ptr), PACK(size, 0));              // 다음 블록의 푸터 수정 (한 블록으로 통합되었음에 유의할 것.)
+        
+    } else if (!prev_alloc) {
+        // 이전 블록과 연결 가능.
+
+        // 이전 블록을 연결 리스트에서 제거
+        removeNode(PREV_BLKP(ptr));
+
+        size += GET_SIZE(HDRP(PREV_BLKP(ptr)));     // 이전 블록의 크기 더하기
+        PUT(FTRP(ptr), PACK(size, 0));              // 현재 블록의 푸터 수정
+        PUT(HDRP(PREV_BLKP(ptr)), PACK(size, 0));   // 이전 블록의 헤더 수정
+
         ptr = PREV_BLKP(ptr);                       // 통합된 블록으로 주소 갱신
     }
     pushNode(ptr);
@@ -329,13 +348,10 @@ static void *find_fit(size_t asize){
 
 // 요청한 블록을 가용 블록의 시작에 배치.
 // 분할은 나머지 부분의 크기가 최소 블록 크기 이상일 때만 수행.
-static void place(void *bp, size_t asize){
-    size_t curr_size, rest_size;
+static void place(void *bp, size_t asize){ 
+    size_t curr_size = GET_SIZE(HDRP(bp));
+    size_t rest_size = curr_size - asize;
     
-    // 나머지 부분의 크기를 계산한다
-    curr_size = GET_SIZE(HDRP(bp));
-    rest_size = curr_size - asize;
-
     // 현재 블록을 가용 리스트에서 제거
 
     removeNode(bp);
@@ -351,15 +367,27 @@ static void place(void *bp, size_t asize){
         // 뒷 블록의 푸터 만들기
         PUT(FTRP(NEXT_BLKP(bp)), PACK(rest_size, 0));
         // 가용 리스트에 뒷 블록 추가
-        pushNode(NEXT_BLKP(bp));    
+        coalesce(NEXT_BLKP(bp));    
     } else {
         // 최소 블록 크기 이상이 아닌 경우, 분할을 수행하지 않는다
         // 헤더, 푸터 0에서 1로 바꾸기
         PUT(HDRP(bp), PACK(curr_size, 1));
         PUT(FTRP(bp), PACK(curr_size, 1));
     }
+}
 
+static void split_block(void *bp, size_t asize){
+    size_t curr_size = GET_SIZE(HDRP(bp));
+    size_t rest_size = curr_size - asize;
 
+    // 앞 블록의 헤더
+    PUT(HDRP(bp), PACK(asize, 1));
+    // 앞 블록의 푸터
+    PUT(FTRP(bp), PACK(asize, 1));
+    // 뒷 헤더 만들기
+    PUT(HDRP(NEXT_BLKP(bp)), PACK(rest_size, 0));
+    // 뒷 블록의 푸터 만들기
+    PUT(FTRP(NEXT_BLKP(bp)), PACK(rest_size, 0));
 }
 
 static void check_all(){
@@ -376,6 +404,53 @@ static void check_all(){
     }
 }
 
+// static void *realloc_coalesce(void *ptr, size_t extraSize){
+//     size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(ptr)));    // 이전블록 할당비트
+//     size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(ptr)));    // 다음블록 할당비트
+//     size_t prev_size = GET_SIZE(FTRP(PREV_BLKP(ptr)));
+//     size_t next_size = GET_SIZE(HDRP(NEXT_BLKP(ptr)));
+//     size_t size = GET_SIZE(HDRP(ptr));
+
+    
+//     if (!next_alloc && next_size >= extraSize) {
+//         // 다음 블록과 연결 가능.
+
+//         // 다음 블록을 연결 리스트에서 제거
+//         removeNode(NEXT_BLKP(ptr));
+
+//         size += next_size;     // 다음 블록의 크기 더하기
+//         PUT(HDRP(ptr), PACK(size, 1));              // 현재 블록의 헤더 수정
+//         PUT(FTRP(ptr), PACK(size, 1));              // 다음 블록의 푸터 수정 (한 블록으로 통합되었음에 유의할 것.)
+//         return ptr;
+//     } else if (!prev_alloc && prev_size >= extraSize) {
+//         // 이전 블록과 연결 가능.
+
+//         // 이전 블록을 연결 리스트에서 제거
+//         removeNode(PREV_BLKP(ptr));
+
+//         size += prev_size;     // 이전 블록의 크기 더하기
+//         PUT(FTRP(ptr), PACK(size, 1));              // 현재 블록의 푸터 수정
+//         PUT(HDRP(PREV_BLKP(ptr)), PACK(size, 1));   // 이전 블록의 헤더 수정
+
+//         ptr = PREV_BLKP(ptr);                       // 통합된 블록으로 주소 갱신
+//         return ptr;
+//     } else if (!prev_alloc && !next_alloc && (prev_size + next_size) >= extraSize){
+//         // 이전, 다음 블록과 연결 가능.
+
+//         // 이전, 다음 블록을 연결 리스트에서 제거
+//         removeNode(PREV_BLKP(ptr));
+//         removeNode(NEXT_BLKP(ptr));
+
+//         size += prev_size;                          // 이전 블록의 크기 더하기
+//         size += next_size;                          // 다음 블록의 크기 더하기
+//         PUT(HDRP(PREV_BLKP(ptr)), PACK(size, 1));   // 이전 블록의 헤더 수정
+//         PUT(FTRP(NEXT_BLKP(ptr)), PACK(size, 1));   // 다음 블록의 푸터 수정
+//         ptr = PREV_BLKP(ptr);                       // 통합된 블록으로 주소 갱신
+//         return ptr;
+//     }
+//     return NULL;
+// }
+
 /*
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
  * 최소 size 크기의 메모리 할당 후 포인터를 반환한다.
@@ -384,30 +459,131 @@ static void check_all(){
  * 둘 다 아닌 겨우(정상적인 경우), ptr가 가리키는 메모리 블록의 크기를 size로 바꾸고 새 블록을 반환. 이때 주소는 같을 수도 있고 다를 수도 있음.
  * 블록 내 데이터는 이전 블록의 크기와 이후 블록의 크기 중 최솟값을 기준.
  */
-void *mm_realloc(void *ptr, size_t size)
+
+void *mm_realloc(void *bp, size_t size)
 {
-    if (ptr == NULL){
+    
+    if (bp == NULL){
         return mm_malloc(size);
     } else if (size == 0){
-        mm_free(ptr);
+        mm_free(bp);
         return NULL;
     }
 
-    void *oldPtr = ptr;
-    void *newPtr = mm_malloc(size);
-
     // 이전 블록의 크기
-    size_t copySize = GET_SIZE(HDRP(ptr));
+    size_t newSize = ALIGN(size + DSIZE);
+    size_t oldSize = GET_SIZE(HDRP(bp));
+    //printf("원래 블록 (%p|%d|%d)를 %d(실제 %d)로 변경\n", bp, oldSize, GET_ALLOC(HDRP(bp)), size, newSize);
 
-    if (size < copySize){
-        copySize = size;
+    // 이전 블록의 크기가 큰 경우 -> 자른 뒤 남은 건 free
+    if (oldSize >= (4 * WSIZE) + newSize){
+        // 앞 블록의 헤더
+        PUT(HDRP(bp), PACK(newSize, 1));
+        // 앞 블록의 푸터
+        PUT(FTRP(bp), PACK(newSize, 1));
+        // 뒷 헤더 만들기
+        PUT(HDRP(NEXT_BLKP(bp)), PACK(oldSize - newSize, 0));
+        // 뒷 블록의 푸터 만들기
+        PUT(FTRP(NEXT_BLKP(bp)), PACK(oldSize - newSize, 0));
+        // 가용 리스트에 뒷 블록 추가
+        coalesce(NEXT_BLKP(bp));    
+        //printf("블록 (%p|%d|%d)로 자름\n\n", bp, GET_SIZE(HDRP(bp)), GET_ALLOC(HDRP(bp)));
+        return bp;    
+    } else if (oldSize >= newSize){
+        //printf("현재 블록을 그대로 놔둠\n\n");
+        return bp;
+    } else {
+        // 새 블록의 크기가 큰 경우
+        // 오른쪽 블록이 미할당 + 확장할 만큼 클 때
+        char *next = NEXT_BLKP(bp);
+        size_t allocSize = oldSize + GET_SIZE(HDRP(next));
+        if (!GET_ALLOC(HDRP(next)) && (allocSize >= newSize)){
+            removeNode(next);
+            PUT(HDRP(bp), PACK(allocSize, 1));              // 현재 블록의 헤더 수정
+            PUT(FTRP(bp), PACK(allocSize, 1));              // 다음 블록의 푸터 수정 (한 블록으로 통합되었음에 유의할 것.)
+            //printf("블록 (%p|%d|%d)로 병합\n", bp, GET_SIZE(HDRP(bp)), GET_ALLOC(HDRP(bp)));
+            if (allocSize >= newSize + 4 * WSIZE){
+                // 앞 블록의 헤더
+                PUT(HDRP(bp), PACK(newSize, 1));
+                // 앞 블록의 푸터
+                PUT(FTRP(bp), PACK(newSize, 1));
+                // 뒷 헤더 만들기
+                PUT(HDRP(NEXT_BLKP(bp)), PACK(allocSize - newSize, 0));
+                // 뒷 블록의 푸터 만들기
+                PUT(FTRP(NEXT_BLKP(bp)), PACK(allocSize - newSize, 0));
+                // 가용 리스트에 뒷 블록 추가
+                coalesce(NEXT_BLKP(bp));
+                //printf("블록 (%p|%d|%d)/(%p|%d|%d)로 자름\n", bp, GET_SIZE(HDRP(bp)), GET_ALLOC(HDRP(bp)), NEXT_BLKP(bp), GET_SIZE(HDRP(NEXT_BLKP(bp))), GET_ALLOC(HDRP(NEXT_BLKP(bp))));
+
+            }
+            //printf("\n");
+            return bp;
+        } else {
+            char *prev = PREV_BLKP(bp);
+            size_t allocSize = GET_SIZE(HDRP(prev)) + oldSize;
+            if (!GET_ALLOC(HDRP(prev)) && (allocSize >= newSize)){
+                removeNode(prev);
+                PUT(FTRP(bp), PACK(allocSize, 1));              // 현재 블록의 푸터 수정
+                PUT(HDRP(prev), PACK(allocSize, 1));   // 이전 블록의 헤더 수정
+                memmove(prev, bp, oldSize);
+                // printf("블록 (%p|%d|%d)로 병합\n", prev, GET_SIZE(HDRP(prev)), GET_ALLOC(HDRP(prev)));
+
+                if (allocSize >= newSize + 4 * WSIZE){
+                    // 앞 블록의 헤더
+                    PUT(HDRP(prev), PACK(newSize, 1));
+                    // 앞 블록의 푸터
+                    PUT(FTRP(prev), PACK(newSize, 1));
+                    // 뒷 헤더 만들기
+                    PUT(HDRP(NEXT_BLKP(prev)), PACK(allocSize - newSize, 0));
+                    // 뒷 블록의 푸터 만들기
+                    PUT(FTRP(NEXT_BLKP(prev)), PACK(allocSize - newSize, 0));
+                    // 가용 리스트에 뒷 블록 추가
+                    coalesce(NEXT_BLKP(prev));
+                    // printf("블록 (%p|%d|%d)/(%p|%d|%d)로 자름\n", prev, GET_SIZE(HDRP(prev)), GET_ALLOC(HDRP(prev)), NEXT_BLKP(prev), GET_SIZE(HDRP(NEXT_BLKP(prev))), GET_ALLOC(HDRP(NEXT_BLKP(prev))));
+                }
+                return prev;
+            } else {
+            void *newBp = mm_malloc(size);
+            //이전 블록의 내용을 새 블록으로 복사
+            memmove(newBp, bp, oldSize);
+
+            // 이전 블록에 할당된 메모리 free
+            mm_free(bp);
+
+            // printf("블록 (%p|%d|%d)로 배치 이동\n\n", newBp, GET_SIZE(HDRP(newBp)), GET_ALLOC(HDRP(newBp)));
+            return newBp;
+        }
+    
     }
-
-    // 이전 블록의 내용을 새 블록으로 복사
-    memcpy(newPtr, oldPtr, copySize);
-
-    // 이전 블록에 할당된 메모리 free
-    mm_free(oldPtr);
-
-    return newPtr;
+        
+    }
 }
+// }
+
+// void *mm_realloc(void *ptr, size_t size)
+// {
+//     if (ptr == NULL){
+//         return mm_malloc(size);
+//     } else if (size == 0){
+//         mm_free(ptr);
+//         return NULL;
+//     }
+
+//     void *oldPtr = ptr;
+//     void *newPtr = mm_malloc(size);
+
+//     // 이전 블록의 크기
+//     size_t copySize = GET_SIZE(HDRP(ptr));
+
+//     if (size < copySize){
+//         copySize = size;
+//     }
+
+//     // 이전 블록의 내용을 새 블록으로 복사
+//     memcpy(newPtr, oldPtr, copySize);
+
+//     // 이전 블록에 할당된 메모리 free
+//     mm_free(oldPtr);
+
+//     return newPtr;
+// }
