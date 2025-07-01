@@ -7,7 +7,10 @@
             "request": "launch",
             "program": "${workspaceFolder}/malloc-lab/mdriver",
             "args": [
-                "-V"
+                "-V",
+                "-f",
+                "traces/realloc-bal.rep",
+                "traces/realloc2-bal.rep"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}/malloc-lab",
