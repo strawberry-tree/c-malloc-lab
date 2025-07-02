@@ -51,9 +51,6 @@ team_t team = {
 
 // 크기 비트와 할당 비트 통합 -> 헤더, 푸터 저장용
 #define PACK(size, preloc, alloc) ((size) | (preloc) << 1 | (alloc)) 
-// 주소 p가 헤더일 때, 직전 블록의 할당 비트를 반환
-#define GET_PRELOC(p) ((GET(p) >> 1) & 0x1)
-
 // 주소 p가 헤더일 때, 저장된 size를 반환
 #define GET_SIZE(p) (GET(p) & ~0x7)   
 // 주소 p가 헤더일 때, 직전 블록의 할당 비트를 반환
@@ -208,7 +205,7 @@ void *mm_malloc(size_t size)
     // size == 0인 경우 NULL을 반환
     if (size == 0) return NULL;
 
-    // 입력받은 size에 헤더의 크기를 (4바이트) 포함하고,
+    // 입력받은 size에 헤더 (4바이트) 포함하고,
     // 인접한 8의 배수로 올려서 실제 할당받을 크기를 구함
     asize = ALIGN(size + WSIZE);
         

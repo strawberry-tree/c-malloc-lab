@@ -209,8 +209,8 @@ void *mm_malloc(size_t size)
     // size == 0인 경우 NULL을 반환
     if (size == 0) return NULL;
 
-    // 현재 size에 헤더 + 푸터를 포함하고, 인접한 DSIZE의 배수로 올림 (패딩)
-    // 이때 포인터는 저장할 필요가 없음에 유의.
+    // 입력받은 size에 헤더 + 푸터의 크기 (8바이트)를 포함하고
+    // 인접한 8의 배수로 올려서 실제 할당받을 크기를 구함
     asize = ALIGN(size + 2 * WSIZE);
         
     // 맞는 칸이 있는지 확인

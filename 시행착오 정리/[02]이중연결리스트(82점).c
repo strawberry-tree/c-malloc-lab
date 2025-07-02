@@ -51,12 +51,14 @@ team_t team = {
 
 // 기본 매크로 함수
 #define MAX(x, y) ((x) > (y)? (x): (y))         // 두 값 중 더 큰 값
-// 크기 비트와 할당 비트 통합 -> 헤더, 푸터 저장용
-#define PACK(size, alloc) ((size) | (alloc))    
+ 
 // p는 (void *)일 수 있으니 (unsigned int *)로 변환. 포인터가 참조하는 워드 리턴.
 #define GET(p) (*(uintptr_t *)(p))         
  // 포인터가 참조하는 워드에 val을 저장.  
 #define PUT(p, val) (*(uintptr_t *)(p) = (uintptr_t)(val)) 
+
+// 크기 비트와 할당 비트 통합 -> 헤더, 푸터 저장용
+#define PACK(size, alloc) ((size) | (alloc))   
 // 주소 p가 헤더일 때, 저장된 size를 반환
 #define GET_SIZE(p) (GET(p) & ~0x7)     
  // 주소 p가 헤더일 때, 저장된 유효 비트를 반환        
@@ -173,8 +175,8 @@ void *mm_malloc(size_t size)
     // size == 0인 경우 NULL을 반환
     if (size == 0) return NULL;
 
-    // 현재 size에 헤더 + 푸터를 포함하고, 인접한 DSIZE의 배수로 올림 (패딩)
-    // 이때 포인터는 저장할 필요가 없음에 유의.
+    // 입력받은 size에 헤더 + 푸터 (각각 4바이트) 포함하고, 
+    // 인접한 8의 배수로 올려서 실제 할당받을 크기를 구함
     asize = ALIGN(size + 2 * WSIZE);
         
     // 맞는 칸이 있는지 확인
@@ -249,8 +251,11 @@ static void pushNode(void *newNode){
 // ptr이 가리키는 블록과 인접 블록을 연결 후, 연결된 블록의 주소 반환. 얜 리스트랑 상관없이 인접하면 병합.
 // 대신 이걸로 통합되면 연결관계를 바꿔주긴 해야 함.
 static void *coalesce(void *ptr){
-    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(ptr)));    // 이전블록 할당비트
-    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(ptr)));    // 다음블록 할당비트
+    // 이전블록 할당비트: 이전블록의 주소 계산해 확인
+    size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(ptr)));  
+    // 다음블록 할당비트: 다음블록의 주소 계산해 확인    
+    size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(ptr)));    
+    
     size_t size = GET_SIZE(HDRP(ptr));
 
     if (prev_alloc && next_alloc){
