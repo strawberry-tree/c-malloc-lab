@@ -267,9 +267,10 @@ static void pushNode(void *newNode){
     heap_heads[index] = newNode;
 }
 
-// ptr이 가리키는 블록과 인접 블록을 연결 후, 연결된 블록의 주소 반환. 얜 리스트랑 상관없이 인접하면 병합.
-// 대신 이걸로 통합되면 연결관계를 바꿔주긴 해야 함.
-static void *coalesce(void *ptr){
+/*
+ * coalesce -  ptr이 가리키는 블록과 인접 블록을 병합 후, 연결된 블록의 주소 반환
+ */
+ static void *coalesce(void *ptr){
 
     // 이전블록 할당비트: 현재블록의 헤더에 저장되어 있음
     size_t prev_alloc = GET_PRELOC(HDRP(ptr));
@@ -279,9 +280,9 @@ static void *coalesce(void *ptr){
     size_t size = GET_SIZE(HDRP(ptr));                      // 현재 블록의 크기
     char get_preloc;                                        // 현재 블록의 이전블록할당비트 값 저장
     if (next_alloc && prev_alloc){
-        // 연결 불가능, 할 게 없음
+        // 병합 불가능, 할 게 없음
     } else if (!next_alloc && prev_alloc) {
-        // 다음 블록과 연결 가능.
+        // 다음 블록과 병합
         get_preloc = GET_PRELOC(HDRP(ptr));
 
         // 다음 블록을 연결 리스트에서 제거
@@ -292,7 +293,7 @@ static void *coalesce(void *ptr){
         PUT(FTRP(ptr), size);                                   // 다음 블록의 푸터 수정 (한 블록으로 통합되었음에 유의할 것.)
         
     } else if (!prev_alloc && next_alloc) {
-        // 이전 블록과 연결 가능.
+        // 이전 블록과 병합
         get_preloc = GET_PRELOC(HDRP(PREV_BLKP(ptr)));
 
         // 이전 블록을 연결 리스트에서 제거
@@ -304,38 +305,40 @@ static void *coalesce(void *ptr){
 
         ptr = PREV_BLKP(ptr);                                   // 통합된 블록으로 주소 갱신
     } else {
-        // 이전, 다음 블록과 연결 가능.
+        // 이전, 다음 블록과 병합
         get_preloc = GET_PRELOC(HDRP(PREV_BLKP(ptr)));
 
         // 이전, 다음 블록을 연결 리스트에서 제거
         removeNode(PREV_BLKP(ptr));
         removeNode(NEXT_BLKP(ptr));
 
-        size += GET_SIZE(HDRP(PREV_BLKP(ptr))) + GET_SIZE(HDRP(NEXT_BLKP(ptr)));                 
         // 이전, 다음 블록의 크기 더하기
+        size += GET_SIZE(HDRP(PREV_BLKP(ptr))) + GET_SIZE(HDRP(NEXT_BLKP(ptr)));                 
         PUT(HDRP(PREV_BLKP(ptr)), PACK(size, get_preloc, 0));   // 이전 블록의 헤더 수정
         PUT(FTRP(NEXT_BLKP(ptr)), size);                        // 다음 블록의 푸터 수정
         ptr = PREV_BLKP(ptr);                                   // 통합된 블록으로 주소 갱신
     }
     pushNode(ptr);                                              // 통합된 블록을 연결 리스트에 추가
     
-    // 블록을 반환한 후, 다음 블록의 이전 할당비트를 0으로 갱신
+    // 블록을 반환한 후, 다음 블록의 이전할당비트를 0으로 갱신
     char *next = NEXT_BLKP(ptr);
     PUT(HDRP(next), PACK(GET_SIZE(HDRP(next)), 0, GET_ALLOC(HDRP(next))));
     return ptr;
 }
 
-// 분리 가용 리스트에서, 할당할 블록을 검색
-// 현재 크기의 분리 리스트부터 탐색. 없으면 다음 크기로.
+/*
+ * find_fit: 분리 가용 리스트에서 할당할 블록을 검색
+*/
+
 static void *find_fit(size_t asize){
     void *bp;                           // 현재 검색중인 블록
     int min_index = get_index(asize);   // 검색을 시작할 분리 리스트
 
-    
     if (asize <= 1024){
-        // 크기가 1024 미만일 시 First Fit
+        // 크기가 1024 이하일 시 First Fit
         for (int index = min_index; index < INDEX_COUNT; index++){
             for (bp = heap_heads[index]; bp != NULL; bp = NEXT_NODE(bp)){
+                // First Fit을 찾자마자 바로 Return
                 if (asize <= GET_SIZE(HDRP(bp))) return bp;
                 }
             }
@@ -343,9 +346,10 @@ static void *find_fit(size_t asize){
     } else {
         // 크기가 1024 초과일 시 Best Fit
         size_t min_diff = SIZE_MAX;         // 블록사이즈 - asize의 최솟값
-        size_t block_size;
-        void *result = NULL;
+        size_t block_size;                  // 현재 블록의 크기
+        void *result = NULL;                // Best Fit으로 찾은 블록의 주소
         for (int index = min_index; index < INDEX_COUNT; index++){
+            // 현재 분리 리스트의 모든 노드 탐색하며 Best Fit 찾음
             for (bp = heap_heads[index]; bp != NULL; bp = NEXT_NODE(bp)){
                 block_size = GET_SIZE(HDRP(bp));
                 if ((asize <= block_size) && (block_size - asize < min_diff) ){
@@ -353,44 +357,17 @@ static void *find_fit(size_t asize){
                     min_diff = block_size - asize;
                 }
             }
+            // 현재 분리 리스트에 Best Fit이 존재하는 경우, 다음 리스트로 안 넘어가고 종료
+            // 존재하지 않으면 result는 NULL이므로 다음 리스트로 넘어감
             if (result != NULL) return result;
         }
         return NULL;
     }
 }
 
-// 요청한 블록을 가용 블록의 시작에 배치.
-// 분할은 나머지 부분의 크기가 최소 블록 크기 이상일 때만 수행.
-static void place(void *bp, size_t asize){ 
-    size_t curr_size = GET_SIZE(HDRP(bp));
-    size_t rest_size = curr_size - asize;
-    char get_preloc = GET_PRELOC(HDRP(bp));
-    // 현재 블록을 가용 리스트에서 제거
-
-    removeNode(bp);
-
-    if (rest_size >= 4 * WSIZE){
-        // 최소 블록 크기 이상인 경우 분할을 수행한다
-        // 앞 블록의 헤더
-        PUT(HDRP(bp), PACK(asize, get_preloc, 1));
-        // 뒷 헤더 만들기
-        PUT(HDRP(NEXT_BLKP(bp)), PACK(rest_size, 1, 0));
-        // 뒷 블록의 푸터 만들기
-        PUT(FTRP(NEXT_BLKP(bp)), rest_size);
-        // 가용 리스트에 뒷 블록 추가
-        coalesce(NEXT_BLKP(bp));    
-    } else {
-        // 최소 블록 크기 이상이 아닌 경우, 분할을 수행하지 않는다
-        // 헤더 1로 바꾸기
-        PUT(HDRP(bp), PACK(curr_size, get_preloc, 1));
-        char *next = NEXT_BLKP(bp);
-        // 블록을 할당하고, 다음 블록의 이전 할당비트를 1로 갱신
-        PUT(HDRP(next), PACK(GET_SIZE(HDRP(next)), 1, GET_ALLOC(HDRP(next))));
-    }
-}
-
-
-
+/*
+ * r_split_block: totalSize 크기의 블록을, cutSize의 할당 블록과 나머지 크기의 가용 블록으로 자르고, 할당 블록을 반환
+*/
 static void *r_split_block(char *bp, size_t totalSize, size_t cutSize){
     char get_preloc = GET_PRELOC(HDRP(bp));
     // 앞 블록의 헤더
@@ -404,6 +381,31 @@ static void *r_split_block(char *bp, size_t totalSize, size_t cutSize){
 
     // 앞 블록을 반환
     return bp;    
+}
+
+/*
+ * place - 요청한 블록을 가용 블록의 시작에 배치하고, 필요에 따라 분할.
+*/
+// 요청한 블록을 가용 블록의 시작에 배치.
+static void place(void *bp, size_t asize){ 
+    size_t curr_size = GET_SIZE(HDRP(bp));
+    size_t rest_size = curr_size - asize;
+    char get_preloc = GET_PRELOC(HDRP(bp));
+    // 현재 블록을 가용 리스트에서 제거
+
+    removeNode(bp);
+
+    if (rest_size >= 4 * WSIZE){
+        // 최소 블록 크기 이상인 경우 분할을 수행한다 
+        r_split_block(bp, curr_size, asize);
+    } else {
+        // 최소 블록 크기 이상이 아닌 경우, 분할을 수행하지 않는다
+        // 헤더 1로 바꾸기
+        PUT(HDRP(bp), PACK(curr_size, get_preloc, 1));
+        char *next = NEXT_BLKP(bp);
+        // 블록을 할당하고, 다음 블록의 이전 할당비트를 1로 갱신
+        PUT(HDRP(next), PACK(GET_SIZE(HDRP(next)), 1, GET_ALLOC(HDRP(next))));
+    }
 }
 
 /*
@@ -422,41 +424,49 @@ void *mm_realloc(void *bp, size_t size)
         return NULL;
     }
 
-    // 이전 블록의 크기
-    size_t newSize = ALIGN(size + WSIZE);
-    size_t oldSize = GET_SIZE(HDRP(bp));
+    size_t newSize = ALIGN(size + WSIZE);   // 새로 할당할 메모리 크기
+    size_t oldSize = GET_SIZE(HDRP(bp));    // 기본 블록의 메모리 크기
     char get_preloc;
 
 
-    // 이전 블록의 크기가 큰 경우 -> 자른 뒤 남은 건 free
+    
     if (oldSize >= (4 * WSIZE) + newSize){
+        // 기존 블록의 크기가 큰 경우 -> 자른 뒤 남은 건 free
         return r_split_block(bp, oldSize, newSize);
     } else if (oldSize >= newSize){
+        // 단, 자를 때 남은 블록의 크기가 최소 블록크기보다 작은 경우, 기존 블록을 유지
         return bp;
     } else {
-        // 새 블록의 크기가 큰 경우
-        // 오른쪽 블록이 미할당 + 확장할 만큼 클 때
+        // 새로 할당할 블록의 크기가 큰 경우
         char *next = NEXT_BLKP(bp);
         size_t allocSize = oldSize + GET_SIZE(HDRP(next));
         get_preloc = GET_PRELOC(HDRP(bp));
         if (!GET_ALLOC(HDRP(next)) && (allocSize >= newSize)){
-            removeNode(next);
-            PUT(HDRP(bp), PACK(allocSize, get_preloc, 1));              // 현재 블록의 헤더 수정
+            // (1) 다음 블록이 가용 블록이며
+            // (2) (현재 블록 크기 + 다음 블록 크기) >= (새로 할당할 크기)일 때
+            // 다음 블록을 병합해 할당 후, 필요에 따라 자름
+            removeNode(next);                                           // 다음 블록을 가용 리스트에서 제거
+            PUT(HDRP(bp), PACK(allocSize, get_preloc, 1));              // 병합된 블록의 헤더 수정
 
+            
             if (allocSize >= newSize + 4 * WSIZE){
+                // 최소 블록크기 이상이 남는 경우 자름 
                 return r_split_block(bp, allocSize, newSize);
-            } 
-            else {
+            } else {
+                // 최소 블록크기만큼 남지 않는 경우, 자르지 않음
                 next = NEXT_BLKP(bp);
+                // 블록을 할당하고, 다음 블록의 이전 할당비트를 1로 갱신
                 PUT(HDRP(next), PACK(GET_SIZE(HDRP(next)), 1, GET_ALLOC(HDRP(next))));
             }
             return bp;
         } else {
+            // 새로운 블록 할당
             void *newBp = mm_malloc(size);
-            //이전 블록의 내용을 새 블록으로 복사
+            // 이전 블록의 내용을 새 블록으로 복사
             memcpy(newBp, bp, oldSize - WSIZE);
             // 이전 블록에 할당된 메모리 free
             mm_free(bp);
+            // 새로운 블록 주소 반환
             return newBp;
         }
     }        
